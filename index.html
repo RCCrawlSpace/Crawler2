@@ -51,26 +51,31 @@
                         <div class="title-row"><span class="setting-title">Startup Kick</span><div class="help-btn" onclick="toggleTech(this)">?</div></div>
                         <span class="setting-value" id="val-power">5</span>
                     </div>
-                    <div class="desc-simple">Controls the initial burst of energy.</div>
-                    <div class="desc-tech"><strong>Sine Mode Power</strong><br>Min duty cycle for startup.</div>
+                    <div class="desc-simple">Controls the initial burst of energy given to the motor.</div>
+                    <div class="desc-action">Recommendation: <strong>2-4</strong> for crawling. Too low = stall. Too high = jumpy start.</div>
+                    <div class="desc-tech"><strong>Sine Mode Power</strong><br>Sets minimum duty cycle during open-loop startup sequence.</div>
                     <input type="range" id="input-power" min="1" max="10" step="1" value="5">
                 </div>
+                
                 <div class="setting-group">
                     <div class="setting-header">
                         <div class="title-row"><span class="setting-title">Smoothness</span><div class="help-btn" onclick="toggleTech(this)">?</div></div>
                         <span class="setting-value" id="val-range">25</span>
                     </div>
-                    <div class="desc-simple">How long it stays "buttery smooth".</div>
-                    <div class="desc-tech"><strong>Sine Startup Range</strong><br>RPM crossover point.</div>
+                    <div class="desc-simple">How long the motor stays in "Silent Mode" before switching to power mode.</div>
+                    <div class="desc-action">Recommendation: <strong>20-25</strong>. Higher values keep it buttery smooth at low RPM.</div>
+                    <div class="desc-tech"><strong>Sine Startup Range</strong><br>RPM crossover point between Sine (Open Loop) and Back-EMF (Closed Loop).</div>
                     <input type="range" id="input-range" min="5" max="30" step="1" value="25">
                 </div>
+                
                 <div class="setting-group">
                     <div class="setting-header">
                         <div class="title-row"><span class="setting-title">Throttle Weight</span><div class="help-btn" onclick="toggleTech(this)">?</div></div>
                         <span class="setting-value" id="val-ramp">1.1</span>
                     </div>
-                    <div class="desc-simple">Simulates a heavy flywheel.</div>
-                    <div class="desc-tech"><strong>Throttle Rate of Change</strong><br>Acceleration delta limit.</div>
+                    <div class="desc-simple">Adds a "virtual flywheel" feel. Lower values make the throttle feel heavy and controlled.</div>
+                    <div class="desc-action">Recommendation: <strong>1.0 - 3.0</strong>. Prevents accidental wheelspin on slick rocks.</div>
+                    <div class="desc-tech"><strong>Throttle Rate of Change</strong><br>Limits maximum acceleration delta per millisecond.</div>
                     <input type="range" id="input-ramp" min="1" max="20" step="0.1" value="1.1">
                 </div>
             </div>
@@ -78,16 +83,22 @@
             <div class="section-header">Brake & Reverse</div>
             <div class="card">
                 <div class="switch-container setting-group">
-                    <div><div class="title-row"><span class="setting-title">Brake On Stop</span></div></div>
+                    <div>
+                        <div class="title-row"><span class="setting-title">Brake On Stop</span><div class="help-btn" onclick="toggleTech(this)">?</div></div>
+                        <div class="desc-action" style="margin:0">Forces full stop before reverse.</div>
+                    </div>
                     <label class="switch"><input type="checkbox" id="input-brakeOnStop" checked><span class="slider"></span></label>
+                    <div class="desc-tech">Protects transmission gears by ensuring 0 RPM before reversing commutation.</div>
                 </div>
+                
                 <div class="setting-group">
                     <div class="setting-header">
                         <div class="title-row"><span class="setting-title">Stop Hold Power</span><div class="help-btn" onclick="toggleTech(this)">?</div></div>
                         <span class="setting-value" id="val-stop-power">2%</span>
                     </div>
-                    <div class="desc-simple">Active holding power when stopped.</div>
-                    <div class="desc-tech"><strong>Active brake on stop power %</strong><br>Holding torque at 0 RPM.</div>
+                    <div class="desc-simple">Active electronic braking when the trigger is neutral.</div>
+                    <div class="desc-action">Recommendation: <strong>2% - 10%</strong>. Higher holds better on hills but heats up the motor.</div>
+                    <div class="desc-tech"><strong>Active Brake</strong><br>Duty cycle applied to short motor phases at 0 RPM.</div>
                     <input type="range" id="input-stop-power" min="0" max="20" step="1" value="2">
                 </div>
             </div>
@@ -103,26 +114,37 @@
                 </div>
                 <div class="setting-group">
                     <div class="setting-header"><span class="setting-title">Motor KV</span></div>
+                    <div class="desc-action">For telemetry calculation only.</div>
                     <input type="number" id="input-kv" value="2000" class="input-num">
                 </div>
                 <div class="setting-group">
                     <div class="setting-header"><span class="setting-title">Motor Poles</span></div>
+                    <div class="desc-action">Standard Outrunner = 14 Poles.</div>
                     <input type="number" id="input-poles" value="14" class="input-num">
                 </div>
                 <div class="setting-group">
                     <div class="setting-header"><span class="setting-title">Timing Advance</span><span class="setting-value" id="val-timing">15°</span></div>
+                    <div class="desc-simple">Electronic timing advance.</div>
+                    <div class="desc-action"><strong>15°</strong> is standard. Lower (0-10) for Torque/Efficiency. Higher (20+) for Top Speed/Heat.</div>
                     <input type="range" id="input-timing" min="0" max="30" step="1" value="15">
                 </div>
                 <div class="switch-container setting-group">
-                    <div><span class="setting-title">Comp. PWM</span></div>
+                    <div>
+                        <span class="setting-title">Comp. PWM</span>
+                        <div class="desc-action" style="margin:0">Required for Drag Brake. Keep ON.</div>
+                    </div>
                     <label class="switch"><input type="checkbox" id="input-comp-pwm" checked><span class="slider"></span></label>
                 </div>
                 <div class="switch-container setting-group">
-                    <div><span class="setting-title">Variable PWM</span></div>
+                    <div>
+                        <span class="setting-title">Variable PWM</span>
+                        <div class="desc-action" style="margin:0">Keep OFF for consistent crawler feel.</div>
+                    </div>
                     <label class="switch"><input type="checkbox" id="input-var-pwm"><span class="slider"></span></label>
                 </div>
                 <div class="setting-group">
                     <div class="setting-header"><span class="setting-title">PWM Freq</span></div>
+                    <div class="desc-action"><strong>48kHz</strong> is best for silence and smoothness.</div>
                     <select id="input-pwm">
                         <option value="24">24 kHz</option>
                         <option value="48" selected>48 kHz</option>
@@ -138,14 +160,15 @@
             <div class="card">
                 <div class="setting-group">
                     <div class="setting-header"><span class="setting-title">Beep Volume</span><span class="setting-value" id="val-beep">40</span></div>
+                    <div class="desc-simple">Loudness of startup tones and lost-model beacon.</div>
                     <input type="range" id="input-beep" min="10" max="100" step="5" value="40">
                 </div>
                 <div class="switch-container setting-group">
-                    <div><span class="setting-title">Stall Protection</span></div>
+                    <div><span class="setting-title">Stall Protection</span><div class="desc-action" style="margin:0">Prevents burnout. Keep ON.</div></div>
                     <label class="switch"><input type="checkbox" id="input-stall" checked><span class="slider"></span></label>
                 </div>
                 <div class="switch-container setting-group">
-                    <div><span class="setting-title">Stuck Rotor Prot.</span></div>
+                    <div><span class="setting-title">Stuck Rotor Prot.</span><div class="desc-action" style="margin:0">Safety cutoff. Keep ON.</div></div>
                     <label class="switch"><input type="checkbox" id="input-stuck" checked><span class="slider"></span></label>
                 </div>
             </div>
