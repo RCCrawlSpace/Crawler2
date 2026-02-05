@@ -1,14 +1,14 @@
 /*
-  CRAWLER COMMAND - FINAL STABLE
-  Status: PRODUCTION
-  Fixes: Save Button Visibility, Null Pointer Crashes, Default Initialization
+  CRAWLER COMMAND - FINAL VERSION
+  Presets: Crawl, Trail, Bounce (Rabbit)
+  Safety: No blind overwrites.
 */
 
 // ==========================================
 // 1. SETUP
 // ==========================================
 let port, writer, reader, connected = false;
-let originalSettings = null; // Will hold the raw 176 bytes
+let originalSettings = null; 
 
 const btnConnect = document.getElementById('btn-connect');
 const btnSave = document.getElementById('btn-save');
@@ -92,13 +92,16 @@ async function handleConnection() {
         
         if (response && response.length > 170) {
             const data = response.slice(1, 177); 
-            originalSettings = Array.from(data); // Save raw bytes
+            originalSettings = Array.from(data); // Save raw bytes BACKUP
             parseSettings(data);
             enableBackupBtn();
             showToast("Settings Loaded!");
         } else {
-            console.warn("Read incomplete, using defaults.");
-            loadDefaults(); 
+            console.warn("Read incomplete.");
+            alert("Connection successful, but READ failed. Please reconnect.");
+            // DO NOT LOAD DEFAULTS. DO NOT ENABLE SAVE.
+            // This prevents overwriting the ESC with garbage.
+            btnSave.style.display = 'none'; 
         }
         
     } catch (err) {
@@ -111,13 +114,10 @@ async function handleConnection() {
 async function handleSave() {
     if (!connected) return;
     
-    // SAFETY: Initialize buffer if Read failed
+    // SAFETY: If we didn't read successfully, we must NOT save.
     if (!originalSettings) {
-        originalSettings = new Array(176).fill(0);
-        // Default critical flags
-        originalSettings[OFFSET.COMP_PWM] = 1;
-        originalSettings[OFFSET.STALL] = 1;
-        originalSettings[OFFSET.STUCK] = 1;
+        alert("Cannot save! Settings were not read correctly.");
+        return;
     }
 
     btnSave.textContent = "Saving...";
@@ -146,7 +146,7 @@ async function handleSave() {
         const result = await sendPacket(CMD.WriteEE, newBytes);
         if(result) {
             btnSave.textContent = "Saved ✓";
-            originalSettings = newBytes; // Update local backup
+            originalSettings = newBytes; // Update local backup to match new reality
             setTimeout(() => { btnSave.textContent = "Save to ESC"; }, 1500);
         } else {
             throw new Error("No ACK from ESC");
@@ -175,7 +175,6 @@ function updateStatus(text, isConnected) {
     statusBadge.classList.toggle("connected", isConnected);
     btnConnect.textContent = isConnected ? "Disconnect" : "Connect ESC";
     btnConnect.style.background = isConnected ? "#ff453a" : "#30d158";
-    // FORCE DISPLAY
     btnSave.style.display = isConnected ? "block" : "none";
 }
 
@@ -199,18 +198,6 @@ function parseSettings(data) {
     updateAllDisplays();
 }
 
-function loadDefaults() {
-    // Populate defaults if read fails
-    const d = { power: 5, range: 25, ramp: 1.1, stopPower: 2, timing: 15, beep: 40 };
-    setVal('input-power', d.power);
-    setVal('input-range', d.range);
-    setVal('input-stop-power', d.stopPower);
-    setVal('input-timing', d.timing);
-    setVal('input-beep', d.beep);
-    updateAllDisplays();
-    showToast("Loaded Defaults (Read Failed)");
-}
-
 function updateAllDisplays() {
     ['power','range','ramp','stop-power','timing','beep'].forEach(key => {
         const val = document.getElementById('input-'+key).value;
@@ -228,18 +215,19 @@ function showToast(text) { const msg = document.createElement('div'); msg.style.
 
 // PRESETS
 const presets = {
-    default: { power: 3, range: 15, ramp: 6.0, stopPower: 2, timing: 15, beep: 40 },
     crawl: { power: 2, range: 25, ramp: 1.1, stopPower: 5, timing: 10, beep: 40 },
-    trail: { power: 5, range: 15, ramp: 10.0, stopPower: 0, timing: 15, beep: 60 }
+    trail: { power: 5, range: 15, ramp: 10.0, stopPower: 0, timing: 15, beep: 60 },
+    bounce: { power: 7, range: 10, ramp: 15.0, stopPower: 0, timing: 20, beep: 80 }
 };
 
 window.applyPreset = function(name) {
-    let p = presets[name];
     if (name === 'original') { 
-        if (!originalSettings) { alert("Connect first!"); return; } 
+        if (!originalSettings) { alert("Connect first to enable backup!"); return; } 
         parseSettings(originalSettings); // Reload from buffer
+        showToast("Original Settings Restored");
         return; 
     }
+    const p = presets[name];
     if(!p) return;
     setVal('input-power', p.power); 
     setVal('input-range', p.range);
