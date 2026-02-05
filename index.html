@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Crawler Command</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Crawler Command</h1>
+            <div id="status" class="status-badge">DISCONNECTED</div>
+        </header>
+
+        <!-- PRESETS BAR -->
+        <div class="card" style="padding: 15px;">
+            <div class="section-header" style="margin-top:0;">Quick Presets</div>
+            <div class="preset-grid">
+                <button class="preset-btn" id="btn-backup" onclick="applyPreset('original')" style="opacity:0.5; pointer-events:none;">
+                    <div class="preset-icon">💾</div>
+                    <div class="preset-info"><div class="preset-name">My Backup</div><div class="preset-sub">Restore Original</div></div>
+                </button>
+                <button class="preset-btn" onclick="applyPreset('crawl')">
+                    <div class="preset-icon">🐢</div>
+                    <div class="preset-info"><div class="preset-name">Super Slow</div><div class="preset-sub">Butter Smooth</div></div>
+                </button>
+                <button class="preset-btn" onclick="applyPreset('trail')">
+                    <div class="preset-icon">🌲</div>
+                    <div class="preset-info"><div class="preset-name">Trail Run</div><div class="preset-sub">Balanced</div></div>
+                </button>
+                <button class="preset-btn" onclick="applyPreset('default')">
+                    <div class="preset-icon">🛠️</div>
+                    <div class="preset-info"><div class="preset-name">Crawler Std</div><div class="preset-sub">Safe Baseline</div></div>
+                </button>
+            </div>
+        </div>
+
+        <div class="tabs">
+            <button class="tab-btn active" onclick="showTab('performance')">Performance</button>
+            <button class="tab-btn" onclick="showTab('advanced')">Advanced</button>
+            <button class="tab-btn" onclick="showTab('protection')">Safety</button>
+        </div>
+
+        <!-- TAB: PERFORMANCE -->
+        <div id="tab-performance" class="tab-content">
+            <div class="section-header">Throttle Feel</div>
+            <div class="card">
+                <div class="setting-group">
+                    <div class="setting-header">
+                        <div class="title-row"><span class="setting-title">Startup Kick</span><div class="help-btn" onclick="toggleTech(this)">?</div></div>
+                        <span class="setting-value" id="val-power">5</span>
+                    </div>
+                    <div class="desc-simple">Controls the initial burst of energy.</div>
+                    <div class="desc-tech"><strong>Sine Mode Power</strong><br>Min duty cycle for startup.</div>
+                    <input type="range" id="input-power" min="1" max="10" step="1" value="5">
+                </div>
+                <div class="setting-group">
+                    <div class="setting-header">
+                        <div class="title-row"><span class="setting-title">Smoothness</span><div class="help-btn" onclick="toggleTech(this)">?</div></div>
+                        <span class="setting-value" id="val-range">25</span>
+                    </div>
+                    <div class="desc-simple">How long it stays "buttery smooth".</div>
+                    <div class="desc-tech"><strong>Sine Startup Range</strong><br>RPM crossover point.</div>
+                    <input type="range" id="input-range" min="5" max="30" step="1" value="25">
+                </div>
+                <div class="setting-group">
+                    <div class="setting-header">
+                        <div class="title-row"><span class="setting-title">Throttle Weight</span><div class="help-btn" onclick="toggleTech(this)">?</div></div>
+                        <span class="setting-value" id="val-ramp">1.1</span>
+                    </div>
+                    <div class="desc-simple">Simulates a heavy flywheel.</div>
+                    <div class="desc-tech"><strong>Throttle Rate of Change</strong><br>Acceleration delta limit.</div>
+                    <input type="range" id="input-ramp" min="1" max="20" step="0.1" value="1.1">
+                </div>
+            </div>
+
+            <div class="section-header">Brake & Reverse</div>
+            <div class="card">
+                <div class="switch-container setting-group">
+                    <div><div class="title-row"><span class="setting-title">Brake On Stop</span></div></div>
+                    <label class="switch"><input type="checkbox" id="input-brakeOnStop" checked><span class="slider"></span></label>
+                </div>
+                <div class="setting-group">
+                    <div class="setting-header">
+                        <div class="title-row"><span class="setting-title">Stop Hold Power</span><div class="help-btn" onclick="toggleTech(this)">?</div></div>
+                        <span class="setting-value" id="val-stop-power">2%</span>
+                    </div>
+                    <div class="desc-simple">Active holding power when stopped.</div>
+                    <div class="desc-tech"><strong>Active brake on stop power %</strong><br>Holding torque at 0 RPM.</div>
+                    <input type="range" id="input-stop-power" min="0" max="20" step="1" value="2">
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: ADVANCED -->
+        <div id="tab-advanced" class="tab-content" style="display:none;">
+            <div class="section-header">Motor Configuration</div>
+            <div class="card">
+                <div class="switch-container setting-group">
+                    <div><span class="setting-title">Reverse Motor</span></div>
+                    <label class="switch"><input type="checkbox" id="input-reverse"><span class="slider"></span></label>
+                </div>
+                <div class="setting-group">
+                    <div class="setting-header"><span class="setting-title">Motor KV</span></div>
+                    <input type="number" id="input-kv" value="2000" class="input-num">
+                </div>
+                <div class="setting-group">
+                    <div class="setting-header"><span class="setting-title">Motor Poles</span></div>
+                    <input type="number" id="input-poles" value="14" class="input-num">
+                </div>
+                <div class="setting-group">
+                    <div class="setting-header"><span class="setting-title">Timing Advance</span><span class="setting-value" id="val-timing">15°</span></div>
+                    <input type="range" id="input-timing" min="0" max="30" step="1" value="15">
+                </div>
+                <div class="switch-container setting-group">
+                    <div><span class="setting-title">Comp. PWM</span></div>
+                    <label class="switch"><input type="checkbox" id="input-comp-pwm" checked><span class="slider"></span></label>
+                </div>
+                <div class="switch-container setting-group">
+                    <div><span class="setting-title">Variable PWM</span></div>
+                    <label class="switch"><input type="checkbox" id="input-var-pwm"><span class="slider"></span></label>
+                </div>
+                <div class="setting-group">
+                    <div class="setting-header"><span class="setting-title">PWM Freq</span></div>
+                    <select id="input-pwm">
+                        <option value="24">24 kHz</option>
+                        <option value="48" selected>48 kHz</option>
+                        <option value="96">96 kHz</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- TAB: SAFETY -->
+        <div id="tab-protection" class="tab-content" style="display:none;">
+            <div class="section-header">Safety Limits</div>
+            <div class="card">
+                <div class="setting-group">
+                    <div class="setting-header"><span class="setting-title">Beep Volume</span><span class="setting-value" id="val-beep">40</span></div>
+                    <input type="range" id="input-beep" min="10" max="100" step="5" value="40">
+                </div>
+                <div class="switch-container setting-group">
+                    <div><span class="setting-title">Stall Protection</span></div>
+                    <label class="switch"><input type="checkbox" id="input-stall" checked><span class="slider"></span></label>
+                </div>
+                <div class="switch-container setting-group">
+                    <div><span class="setting-title">Stuck Rotor Prot.</span></div>
+                    <label class="switch"><input type="checkbox" id="input-stuck" checked><span class="slider"></span></label>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="sticky-footer">
+        <button id="btn-connect" class="btn-main">Connect ESC</button>
+        <button id="btn-save" class="btn-main btn-secondary" style="display: none;">Save to ESC</button>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
