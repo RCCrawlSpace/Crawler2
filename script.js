@@ -222,7 +222,25 @@ function loadDefaults() {
 function setVal(id, val) { const el = document.getElementById(id); if(el) el.value = val; }
 function updateDisplay(id, val, suffix='') { const el = document.getElementById(id); if(el) el.textContent = val + suffix; }
 function getSuffix(key) { if(key.includes('timing')) return '°'; if(key.includes('stop')) return '%'; return ''; }
-function updateStatus(text, isConnected) { statusBadge.textContent = text; statusBadge.classList.toggle("connected", isConnected); btnConnect.textContent = isConnected ? "Disconnect" : "Connect ESC"; btnConnect.style.background = isConnected ? "#ff453a" : "#30d158"; }
+function updateStatus(text, isConnected) {
+    statusBadge.textContent = text;
+    if (isConnected) {
+        statusBadge.classList.add("connected");
+        btnConnect.textContent = "Disconnect";
+        btnConnect.style.background = "#ff453a";
+        
+        // THIS LINE IS KEY:
+        btnSave.style.display = "block";  
+        
+    } else {
+        statusBadge.classList.remove("connected");
+        btnConnect.textContent = "Connect ESC";
+        btnConnect.style.background = "#30d158";
+        
+        // Hide it on disconnect
+        btnSave.style.display = "none";
+    }
+}
 function showTab(tabName) { document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none'); document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active')); document.getElementById('tab-' + tabName).style.display = 'block'; event.target.classList.add('active'); }
 function toggleTech(btn) { const el = btn.closest('.setting-group').querySelector('.desc-tech'); if(el) el.classList.toggle('show'); }
 function enableBackupBtn() { btnBackup.style.opacity = '1'; btnBackup.style.pointerEvents = 'auto'; }
