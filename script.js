@@ -1,7 +1,7 @@
 /*
-  CRAWLER COMMAND - ROBUST DRIVER
+  CRAWLER COMMAND - FINAL DRIVER (V2)
+  Update: Added CMD_SET_ADDRESS (0xFF) before Read
   Status: PRODUCTION
-  Update: Robust Read Loop (Chunk Assembly)
 */
 
 // ==========================================
@@ -15,7 +15,7 @@ const btnSave = document.getElementById('btn-save');
 const statusBadge = document.getElementById('status');
 const btnBackup = document.getElementById('btn-backup');
 
-const CMD = { Init: 0x30, Exit: 0x35, ReadEE: 0x04, WriteEE: 0x05 };
+const CMD = { Init: 0x30, Exit: 0x35, ReadEE: 0x04, WriteEE: 0x05, SetAddr: 0xFF };
 
 const OFFSET = {
     DIR: 0x11, BI_DIR: 0x12, SINE: 0x13, COMP_PWM: 0x14, VAR_PWM: 0x15,
@@ -53,24 +53,19 @@ async function sendPacket(cmd, params = [], expectedBytes = 0) {
     const crc = crc16(new Uint8Array(payload));
     const packet = new Uint8Array([...payload, (crc & 0xFF), (crc >> 8) & 0xFF]);
     
-    console.log(`>> Sending CMD: 0x${cmd.toString(16)}`);
+    console.log(`>> Sending CMD: 0x${cmd.toString(16)} Params: [${params}]`);
     await writer.write(packet);
     
-    // READ LOOP (Assemble Chunks)
     let buffer = [];
     const start = Date.now();
     const targetLength = expectedBytes > 0 ? (expectedBytes + 3) : 1; 
     
-    while (Date.now() - start < 1500) { // 1.5s Timeout
+    while (Date.now() - start < 1500) { 
         const { value, done } = await reader.read();
         if (done) break;
         if (value) {
             for(let b of value) buffer.push(b);
-            
-            // Check for simple ACK (0x30)
             if (expectedBytes === 0 && buffer.includes(0x30)) return buffer;
-            
-            // Check for Full Data Packet
             if (buffer.length >= targetLength) return buffer;
         }
     }
@@ -96,14 +91,19 @@ async function handleConnection() {
         // 1. INIT SEQUENCE
         console.log("Sending Init...");
         await sendPacket(CMD.Init, [0], 0);
-        await new Promise(r => setTimeout(r, 100)); // Tiny pause
+        await new Promise(r => setTimeout(r, 100)); 
+
+        // 2. SET ADDRESS (Magic EEPROM Address 0x20)
+        console.log("Setting Address...");
+        // CMD 0xFF, High:0x00, Low:0x20 (Magic value for EEPROM Start)
+        await sendPacket(CMD.SetAddr, [0x00, 0x20], 0);
+        await new Promise(r => setTimeout(r, 100));
         
-        // 2. READ EEPROM
+        // 3. READ EEPROM
         console.log("Reading EEPROM...");
         const response = await sendPacket(CMD.ReadEE, [176], 176);
         
         if (response && response.length > 170) {
-            // Heuristic: If buffer starts with 0x30 (ACK), data is at index 1
             let dataStart = 0;
             if (response[0] === 0x30) dataStart = 1;
             
@@ -155,7 +155,11 @@ async function handleSave() {
     newBytes[OFFSET.STALL] = document.getElementById('input-stall').checked ? 1 : 0;
     newBytes[OFFSET.STUCK] = document.getElementById('input-stuck').checked ? 1 : 0;
 
-    // 2. SEND WRITE COMMAND
+    // 2. SET ADDRESS (Reset pointer to EEPROM Start)
+    await sendPacket(CMD.SetAddr, [0x00, 0x20], 0);
+    await new Promise(r => setTimeout(r, 100));
+
+    // 3. SEND WRITE COMMAND
     try {
         const result = await sendPacket(CMD.WriteEE, newBytes);
         if(result) {
