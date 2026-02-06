@@ -1,7 +1,7 @@
 /*
-  CRAWLER COMMAND - FINAL VERSION
-  Presets: Crawl, Trail, Bounce (Rabbit)
-  Safety: No blind overwrites.
+  CRAWLER COMMAND - ROBUST DRIVER
+  Status: PRODUCTION
+  Update: Robust Read Loop (Chunk Assembly)
 */
 
 // ==========================================
@@ -46,26 +46,35 @@ function crc16(data) {
 }
 
 // ==========================================
-// 2. SERIAL PROTOCOL
+// 2. SERIAL PROTOCOL (ROBUST)
 // ==========================================
-async function sendPacket(cmd, params = []) {
+async function sendPacket(cmd, params = [], expectedBytes = 0) {
     const payload = [cmd, ...params];
     const crc = crc16(new Uint8Array(payload));
     const packet = new Uint8Array([...payload, (crc & 0xFF), (crc >> 8) & 0xFF]);
     
+    console.log(`>> Sending CMD: 0x${cmd.toString(16)}`);
     await writer.write(packet);
     
+    // READ LOOP (Assemble Chunks)
     let buffer = [];
     const start = Date.now();
-    while (Date.now() - start < 800) {
+    const targetLength = expectedBytes > 0 ? (expectedBytes + 3) : 1; 
+    
+    while (Date.now() - start < 1500) { // 1.5s Timeout
         const { value, done } = await reader.read();
         if (done) break;
         if (value) {
             for(let b of value) buffer.push(b);
-            if (params.length === 0 && buffer.length >= 3 && buffer[0] === 0x30) return buffer;
-            if (cmd === CMD.ReadEE && buffer.length >= 178) return buffer;
+            
+            // Check for simple ACK (0x30)
+            if (expectedBytes === 0 && buffer.includes(0x30)) return buffer;
+            
+            // Check for Full Data Packet
+            if (buffer.length >= targetLength) return buffer;
         }
     }
+    console.warn(`<< Timeout. Got ${buffer.length}/${targetLength} bytes.`);
     return buffer.length > 0 ? buffer : null;
 }
 
@@ -84,23 +93,29 @@ async function handleConnection() {
         connected = true;
         updateStatus("CONNECTED", true);
 
+        // 1. INIT SEQUENCE
         console.log("Sending Init...");
-        await sendPacket(CMD.Init, [0]);
+        await sendPacket(CMD.Init, [0], 0);
+        await new Promise(r => setTimeout(r, 100)); // Tiny pause
         
+        // 2. READ EEPROM
         console.log("Reading EEPROM...");
-        const response = await sendPacket(CMD.ReadEE, [176]);
+        const response = await sendPacket(CMD.ReadEE, [176], 176);
         
         if (response && response.length > 170) {
-            const data = response.slice(1, 177); 
-            originalSettings = Array.from(data); // Save raw bytes BACKUP
+            // Heuristic: If buffer starts with 0x30 (ACK), data is at index 1
+            let dataStart = 0;
+            if (response[0] === 0x30) dataStart = 1;
+            
+            const data = response.slice(dataStart, dataStart + 176); 
+            
+            originalSettings = Array.from(data);
             parseSettings(data);
             enableBackupBtn();
             showToast("Settings Loaded!");
         } else {
-            console.warn("Read incomplete.");
-            alert("Connection successful, but READ failed. Please reconnect.");
-            // DO NOT LOAD DEFAULTS. DO NOT ENABLE SAVE.
-            // This prevents overwriting the ESC with garbage.
+            console.warn("Read failed/incomplete.");
+            alert("Connection OK, but Read failed.\n\nTry Unplugging USB and Reconnecting.");
             btnSave.style.display = 'none'; 
         }
         
@@ -114,7 +129,6 @@ async function handleConnection() {
 async function handleSave() {
     if (!connected) return;
     
-    // SAFETY: If we didn't read successfully, we must NOT save.
     if (!originalSettings) {
         alert("Cannot save! Settings were not read correctly.");
         return;
@@ -146,7 +160,7 @@ async function handleSave() {
         const result = await sendPacket(CMD.WriteEE, newBytes);
         if(result) {
             btnSave.textContent = "Saved ✓";
-            originalSettings = newBytes; // Update local backup to match new reality
+            originalSettings = newBytes; // Update local backup
             setTimeout(() => { btnSave.textContent = "Save to ESC"; }, 1500);
         } else {
             throw new Error("No ACK from ESC");
@@ -223,7 +237,7 @@ const presets = {
 window.applyPreset = function(name) {
     if (name === 'original') { 
         if (!originalSettings) { alert("Connect first to enable backup!"); return; } 
-        parseSettings(originalSettings); // Reload from buffer
+        parseSettings(originalSettings); 
         showToast("Original Settings Restored");
         return; 
     }
