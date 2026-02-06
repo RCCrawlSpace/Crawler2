@@ -1,12 +1,9 @@
 /*
-  CRAWLER COMMAND - SPEED TEST
-  Status: TESTING
-  Update: Baud Rate 115200, Single Chunk Read
+  CRAWLER COMMAND - TINY READER
+  Status: DIAGNOSTIC
+  Goal: Read just 1 byte to verify protocol integrity.
 */
 
-// ==========================================
-// 1. SETUP
-// ==========================================
 let port, writer, reader, connected = false;
 let originalSettings = null; 
 
@@ -15,17 +12,10 @@ const btnSave = document.getElementById('btn-save');
 const statusBadge = document.getElementById('status');
 const btnBackup = document.getElementById('btn-backup');
 
-const CMD = { Init: 0x30, Exit: 0x35, ReadEE: 0x04, WriteEE: 0x05, SetAddr: 0xFF };
-
-const OFFSET = {
-    DIR: 0x11, BI_DIR: 0x12, SINE: 0x13, COMP_PWM: 0x14, VAR_PWM: 0x15,
-    STUCK: 0x16, TIMING: 0x17, PWM_FREQ: 0x18, START_POWER: 0x19,
-    KV: 0x1A, POLES: 0x1B, BRAKE_STOP: 0x1C, STALL: 0x1D, BEEP: 0x1E,
-    LVC: 0x24, SINE_RANGE: 0x28, BRAKE_STR: 0x29
-};
+const CMD = { Init: 0x30, ReadEE: 0x04, SetAddr: 0xFF };
 
 btnConnect.addEventListener('click', handleConnection);
-btnSave.addEventListener('click', handleSave);
+btnSave.addEventListener('click', () => alert("Disabled in test mode"));
 
 ['power','range','ramp','stop-power','timing','beep'].forEach(key => {
     const input = document.getElementById('input-'+key);
@@ -45,81 +35,73 @@ function crc16(data) {
     return crc & 0xFFFF;
 }
 
-// ==========================================
-// 2. SERIAL PROTOCOL
-// ==========================================
-async function sendPacket(cmd, params = [], expectedBytes = 0) {
-    if (!writer) return null;
-    
+async function sendPacket(cmd, params = []) {
     const payload = [cmd, ...params];
     const crc = crc16(new Uint8Array(payload));
     const packet = new Uint8Array([...payload, (crc & 0xFF), (crc >> 8) & 0xFF]);
     
+    console.log(`>> TX: [${packet.map(b=>'0x'+b.toString(16)).join(', ')}]`);
     await writer.write(packet);
     
+    // READ (Timeout 500ms)
     let buffer = [];
     const start = Date.now();
-    const targetLength = expectedBytes > 0 ? (expectedBytes + 3) : 1; 
-    
-    while (Date.now() - start < 1000) { 
-        const readPromise = reader.read();
-        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 100));
-        const result = await Promise.race([readPromise, timeoutPromise]);
-        
-        if (result.timeout) continue;
-        if (result.done) break;
-        
-        if (result.value) {
-            for(let b of result.value) buffer.push(b);
-            if (expectedBytes === 0 && buffer.includes(0x30)) return buffer; 
-            if (buffer.length >= targetLength) return buffer;
+    while (Date.now() - start < 500) { 
+        const { value, done } = await reader.read();
+        if (done) break;
+        if (value) {
+            for(let b of value) buffer.push(b);
+            // If we get an ACK (0x30) or any data, return it
+            if (buffer.length > 0) return buffer; 
         }
     }
     return buffer.length > 0 ? buffer : null;
 }
 
-// ==========================================
-// 3. MAIN LOGIC
-// ==========================================
 async function handleConnection() {
     if (connected) { await disconnectSerial(); return; }
     if (!navigator.serial) { alert("Use Chrome."); return; }
 
     try {
         port = await navigator.serial.requestPort();
-        // TRY 115200 BAUD (Faster/Modern Standard)
-        await port.open({ baudRate: 115200 }); 
-        
+        await port.open({ baudRate: 19200 }); 
         writer = port.writable.getWriter();
         reader = port.readable.getReader();
         connected = true;
         updateStatus("CONNECTED", true);
 
         // 1. INIT
-        console.log("Sending Init...");
-        const init = await sendPacket(CMD.Init, [0], 0);
-        if(!init) console.warn("Init Ack Missing (Might be normal for active bootloader)");
+        console.log("--- TEST START ---");
         
-        await new Promise(r => setTimeout(r, 100)); 
+        // Try simple Init
+        const init = await sendPacket(CMD.Init, [0]);
+        console.log("Init RX:", init ? bytesToHex(init) : "None");
+        
+        if (!init || init[0] !== 0x30) {
+            console.warn("Init failed. Trying to proceed anyway...");
+        }
+        
+        await new Promise(r => setTimeout(r, 100));
 
-        // 2. READ TEST (Just 16 bytes)
-        console.log("Reading Chunk 0 (Test)...");
+        // 2. SET ADDR (EEPROM Magic)
+        // [CMD, 00, Hi, Lo]
+        console.log("Setting Address 0x2000...");
+        const addrAck = await sendPacket(CMD.SetAddr, [0x00, 0x20, 0x00]);
+        console.log("Addr RX:", addrAck ? bytesToHex(addrAck) : "None");
+
+        await new Promise(r => setTimeout(r, 100));
+
+        // 3. READ 1 BYTE
+        console.log("Reading 1 Byte...");
+        const readRx = await sendPacket(CMD.ReadEE, [1]);
+        console.log("Read RX:", readRx ? bytesToHex(readRx) : "None");
         
-        // Set Address 0x2000
-        await sendPacket(CMD.SetAddr, [0x00, 0x20, 0x00], 0);
-        
-        // Read 16
-        const chunk = await sendPacket(CMD.ReadEE, [16], 16);
-        
-        if (chunk && chunk.length >= 16) {
-            console.log("READ SUCCESS! Data:", chunk);
-            showToast("Connection Verified!");
-            // If this works, we can enable full read.
-            // For now, load defaults so UI works.
+        if (readRx && readRx.length > 0) {
+            alert("SUCCESS! Received: " + bytesToHex(readRx));
+            // Load dummy UI so it looks nice
             loadDefaults();
         } else {
-            console.error("Read Failed at 115200 baud.");
-            alert("Read Failed. Try changing baud rate back to 19200?");
+            alert("Read Timed Out.");
         }
         
     } catch (err) {
@@ -129,8 +111,8 @@ async function handleConnection() {
     }
 }
 
-async function handleSave() {
-    alert("Save Disabled in Speed Test Mode");
+function bytesToHex(bytes) {
+    return "[" + Array.from(bytes).map(b => '0x' + b.toString(16).toUpperCase()).join(', ') + "]";
 }
 
 async function disconnectSerial() {
@@ -138,60 +120,22 @@ async function disconnectSerial() {
         if (reader) { await reader.cancel(); reader.releaseLock(); }
         if (writer) { await writer.close(); writer.releaseLock(); }
         if (port) { await port.close(); }
-    } catch(e) { console.log(e); }
+    } catch(e) {}
     connected = false;
     updateStatus("DISCONNECTED", false);
 }
 
-// ==========================================
-// 4. UI HELPERS
-// ==========================================
 function updateStatus(text, isConnected) {
     statusBadge.textContent = text;
     statusBadge.classList.toggle("connected", isConnected);
     btnConnect.textContent = isConnected ? "Disconnect" : "Connect ESC";
     btnConnect.style.background = isConnected ? "#ff453a" : "#30d158";
-    btnSave.style.display = isConnected ? "block" : "none";
 }
 
 function loadDefaults() {
-    // Populate defaults if read fails
-    const d = { power: 5, range: 25, ramp: 1.1, stopPower: 2, timing: 15, beep: 40 };
-    setVal('input-power', d.power);
-    setVal('input-range', d.range);
-    setVal('input-stop-power', d.stopPower);
-    setVal('input-timing', d.timing);
-    setVal('input-beep', d.beep);
-    updateAllDisplays();
-    
-    // Create Dummy Original Settings to allow preset buttons to work
-    originalSettings = new Array(176).fill(0);
-}
-
-function parseSettings(data) {
-    setVal('input-power', data[OFFSET.START_POWER] || 5);
-    setVal('input-range', data[OFFSET.SINE_RANGE] || 25);
-    setVal('input-stop-power', data[OFFSET.BRAKE_STR] || 2);
-    setVal('input-timing', data[OFFSET.TIMING] || 15);
-    setVal('input-beep', data[OFFSET.BEEP] || 40);
-    
-    document.getElementById('input-kv').value = ((data[OFFSET.KV]||50) * 40) + 20;
-    document.getElementById('input-poles').value = data[OFFSET.POLES] || 14;
-    
-    document.getElementById('input-brakeOnStop').checked = data[OFFSET.BRAKE_STOP] === 1;
-    document.getElementById('input-reverse').checked = data[OFFSET.DIR] === 1;
-    document.getElementById('input-comp-pwm').checked = data[OFFSET.COMP_PWM] === 1;
-    document.getElementById('input-var-pwm').checked = data[OFFSET.VAR_PWM] === 1;
-    document.getElementById('input-stall').checked = data[OFFSET.STALL] === 1;
-    document.getElementById('input-stuck').checked = data[OFFSET.STUCK] === 1;
-    
-    updateAllDisplays();
-}
-
-function updateAllDisplays() {
     ['power','range','ramp','stop-power','timing','beep'].forEach(key => {
-        const val = document.getElementById('input-'+key).value;
-        updateDisplay('val-'+key, val, getSuffix(key));
+        const input = document.getElementById('input-'+key);
+        if(input) input.value = 5;
     });
 }
 
@@ -201,29 +145,5 @@ function getSuffix(key) { if(key.includes('timing')) return '°'; if(key.include
 function showTab(tabName) { document.querySelectorAll('.tab-content').forEach(el => el.style.display = 'none'); document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active')); document.getElementById('tab-' + tabName).style.display = 'block'; event.target.classList.add('active'); }
 function toggleTech(btn) { const el = btn.closest('.setting-group').querySelector('.desc-tech'); if(el) el.classList.toggle('show'); }
 function enableBackupBtn() { btnBackup.style.opacity = '1'; btnBackup.style.pointerEvents = 'auto'; }
-function showToast(text) { const msg = document.createElement('div'); msg.style.cssText = "position:fixed; top:80px; left:50%; transform:translateX(-50%); background:#333; color:white; padding:10px 20px; border-radius:10px; z-index:2000; box-shadow:0 4px 10px rgba(0,0,0,0.3); font-weight:600;"; msg.textContent = text; document.body.appendChild(msg); setTimeout(() => msg.remove(), 2500); }
 
-// PRESETS
-const presets = {
-    crawl: { power: 2, range: 25, ramp: 1.1, stopPower: 5, timing: 10, beep: 40 },
-    trail: { power: 5, range: 15, ramp: 10.0, stopPower: 0, timing: 15, beep: 60 },
-    bounce: { power: 7, range: 10, ramp: 15.0, stopPower: 0, timing: 20, beep: 80 }
-};
-
-window.applyPreset = function(name) {
-    if (name === 'original') { 
-        if (!originalSettings) { alert("Connect first to enable backup!"); return; } 
-        parseSettings(originalSettings); 
-        showToast("Original Settings Restored");
-        return; 
-    }
-    const p = presets[name];
-    if(!p) return;
-    setVal('input-power', p.power); 
-    setVal('input-range', p.range);
-    setVal('input-ramp', p.ramp);
-    setVal('input-stop-power', p.stopPower);
-    setVal('input-timing', p.timing);
-    setVal('input-beep', p.beep);
-    updateAllDisplays();
-}
+window.applyPreset = function() { alert("Disabled in test mode"); }
