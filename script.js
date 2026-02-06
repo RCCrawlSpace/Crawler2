@@ -1,7 +1,7 @@
 /*
-  CRAWLER COMMAND - STABILITY EDITION
-  Status: PRODUCTION
-  Update: 16-byte chunks, 50ms delays, Race-condition fixes.
+  CRAWLER COMMAND - SPEED TEST
+  Status: TESTING
+  Update: Baud Rate 115200, Single Chunk Read
 */
 
 // ==========================================
@@ -46,7 +46,7 @@ function crc16(data) {
 }
 
 // ==========================================
-// 2. SERIAL PROTOCOL (STABLE)
+// 2. SERIAL PROTOCOL
 // ==========================================
 async function sendPacket(cmd, params = [], expectedBytes = 0) {
     if (!writer) return null;
@@ -61,16 +61,12 @@ async function sendPacket(cmd, params = [], expectedBytes = 0) {
     const start = Date.now();
     const targetLength = expectedBytes > 0 ? (expectedBytes + 3) : 1; 
     
-    // Read with explicit Timeout Race
-    while (Date.now() - start < 800) { 
-        // Create a read promise
+    while (Date.now() - start < 1000) { 
         const readPromise = reader.read();
-        // Create a timeout promise
-        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 200));
-        
+        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 100));
         const result = await Promise.race([readPromise, timeoutPromise]);
         
-        if (result.timeout) continue; // Just loop check time
+        if (result.timeout) continue;
         if (result.done) break;
         
         if (result.value) {
@@ -91,7 +87,9 @@ async function handleConnection() {
 
     try {
         port = await navigator.serial.requestPort();
-        await port.open({ baudRate: 19200 }); 
+        // TRY 115200 BAUD (Faster/Modern Standard)
+        await port.open({ baudRate: 115200 }); 
+        
         writer = port.writable.getWriter();
         reader = port.readable.getReader();
         connected = true;
@@ -99,53 +97,29 @@ async function handleConnection() {
 
         // 1. INIT
         console.log("Sending Init...");
-        await sendPacket(CMD.Init, [0], 0);
+        const init = await sendPacket(CMD.Init, [0], 0);
+        if(!init) console.warn("Init Ack Missing (Might be normal for active bootloader)");
+        
         await new Promise(r => setTimeout(r, 100)); 
 
-        console.log("Reading EEPROM (16-byte Chunks)...");
-        let fullData = [];
-        const chunkSize = 16; // Smaller chunks = More stability
-        const totalSize = 176;
+        // 2. READ TEST (Just 16 bytes)
+        console.log("Reading Chunk 0 (Test)...");
         
-        for(let i=0; i<totalSize; i+=chunkSize) {
-            // Check connection before every chunk
-            if(!connected) break;
-            
-            // Set Address
-            const currentAddr = 0x2000 + i;
-            const addrHi = (currentAddr >> 8) & 0xFF; 
-            const addrLo = currentAddr & 0xFF;        
-            
-            await sendPacket(CMD.SetAddr, [0x00, addrHi, addrLo], 0);
-            await new Promise(r => setTimeout(r, 20)); // Breathe
-            
-            // Read
-            const chunk = await sendPacket(CMD.ReadEE, [chunkSize], chunkSize);
-            
-            if(!chunk) {
-                console.warn(`Chunk ${i} failed/timed out.`);
-                break; 
-            }
-            
-            // Clean chunk
-            let cleanChunk = chunk;
-            if(chunk[0] === 0x30) cleanChunk = chunk.slice(1); 
-            cleanChunk = cleanChunk.slice(0, chunkSize); 
-            
-            fullData = fullData.concat(Array.from(cleanChunk));
-            console.log(`Read ${fullData.length}/${totalSize}`);
-            
-            await new Promise(r => setTimeout(r, 30)); // Delay between chunks
-        }
+        // Set Address 0x2000
+        await sendPacket(CMD.SetAddr, [0x00, 0x20, 0x00], 0);
         
-        if (fullData.length >= 100) { 
-            originalSettings = fullData;
-            parseSettings(fullData);
-            enableBackupBtn();
-            showToast("Settings Loaded!");
+        // Read 16
+        const chunk = await sendPacket(CMD.ReadEE, [16], 16);
+        
+        if (chunk && chunk.length >= 16) {
+            console.log("READ SUCCESS! Data:", chunk);
+            showToast("Connection Verified!");
+            // If this works, we can enable full read.
+            // For now, load defaults so UI works.
+            loadDefaults();
         } else {
-            alert("Read Incomplete. Check connection.");
-            btnSave.style.display = 'none';
+            console.error("Read Failed at 115200 baud.");
+            alert("Read Failed. Try changing baud rate back to 19200?");
         }
         
     } catch (err) {
@@ -156,49 +130,7 @@ async function handleConnection() {
 }
 
 async function handleSave() {
-    if (!connected || !originalSettings) return;
-    btnSave.textContent = "Saving...";
-    
-    let newBytes = [...originalSettings]; 
-    newBytes[OFFSET.START_POWER] = parseInt(document.getElementById('input-power').value);
-    newBytes[OFFSET.SINE_RANGE] = parseInt(document.getElementById('input-range').value);
-    newBytes[OFFSET.BRAKE_STR] = parseInt(document.getElementById('input-stop-power').value);
-    newBytes[OFFSET.TIMING] = parseInt(document.getElementById('input-timing').value);
-    newBytes[OFFSET.BEEP] = parseInt(document.getElementById('input-beep').value);
-    newBytes[OFFSET.KV] = Math.max(0, (parseInt(document.getElementById('input-kv').value) - 20) / 40);
-    newBytes[OFFSET.POLES] = parseInt(document.getElementById('input-poles').value);
-    newBytes[OFFSET.BRAKE_STOP] = document.getElementById('input-brakeOnStop').checked ? 1 : 0;
-    newBytes[OFFSET.DIR] = document.getElementById('input-reverse').checked ? 1 : 0;
-    newBytes[OFFSET.COMP_PWM] = document.getElementById('input-comp-pwm').checked ? 1 : 0;
-    newBytes[OFFSET.VAR_PWM] = document.getElementById('input-var-pwm').checked ? 1 : 0;
-    newBytes[OFFSET.STALL] = document.getElementById('input-stall').checked ? 1 : 0;
-    newBytes[OFFSET.STUCK] = document.getElementById('input-stuck').checked ? 1 : 0;
-
-    try {
-        const chunkSize = 16; // Write small chunks too
-        for(let i=0; i<176; i+=chunkSize) {
-            if(!connected) break;
-            
-            const currentAddr = 0x2000 + i;
-            const addrHi = (currentAddr >> 8) & 0xFF; 
-            const addrLo = currentAddr & 0xFF;   
-            await sendPacket(CMD.SetAddr, [0x00, addrHi, addrLo], 0);
-            await new Promise(r => setTimeout(r, 20));
-            
-            const chunk = newBytes.slice(i, i+chunkSize);
-            const res = await sendPacket(CMD.WriteEE, chunk);
-            if(!res) throw new Error("Write failed at " + i);
-            
-            await new Promise(r => setTimeout(r, 30));
-        }
-        
-        btnSave.textContent = "Saved ✓";
-        originalSettings = newBytes; 
-        setTimeout(() => { btnSave.textContent = "Save to ESC"; }, 1500);
-    } catch(e) {
-        alert("Write Failed: " + e.message);
-        btnSave.textContent = "Save to ESC";
-    }
+    alert("Save Disabled in Speed Test Mode");
 }
 
 async function disconnectSerial() {
@@ -220,6 +152,20 @@ function updateStatus(text, isConnected) {
     btnConnect.textContent = isConnected ? "Disconnect" : "Connect ESC";
     btnConnect.style.background = isConnected ? "#ff453a" : "#30d158";
     btnSave.style.display = isConnected ? "block" : "none";
+}
+
+function loadDefaults() {
+    // Populate defaults if read fails
+    const d = { power: 5, range: 25, ramp: 1.1, stopPower: 2, timing: 15, beep: 40 };
+    setVal('input-power', d.power);
+    setVal('input-range', d.range);
+    setVal('input-stop-power', d.stopPower);
+    setVal('input-timing', d.timing);
+    setVal('input-beep', d.beep);
+    updateAllDisplays();
+    
+    // Create Dummy Original Settings to allow preset buttons to work
+    originalSettings = new Array(176).fill(0);
 }
 
 function parseSettings(data) {
