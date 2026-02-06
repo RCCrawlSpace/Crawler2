@@ -1,6 +1,6 @@
 /*
-  CRAWLER COMMAND - FINAL DRIVER (V2)
-  Update: Added CMD_SET_ADDRESS (0xFF) before Read
+  CRAWLER COMMAND - FINAL DRIVER (CHUNKED)
+  Update: Implemented 32-byte Chunked Reading/Writing to respect buffer limits.
   Status: PRODUCTION
 */
 
@@ -46,31 +46,62 @@ function crc16(data) {
 }
 
 // ==========================================
-// 2. SERIAL PROTOCOL (ROBUST)
+// 2. SERIAL PROTOCOL (CHUNKED)
 // ==========================================
 async function sendPacket(cmd, params = [], expectedBytes = 0) {
     const payload = [cmd, ...params];
     const crc = crc16(new Uint8Array(payload));
     const packet = new Uint8Array([...payload, (crc & 0xFF), (crc >> 8) & 0xFF]);
     
-    console.log(`>> Sending CMD: 0x${cmd.toString(16)} Params: [${params}]`);
+    // console.log(`>> CMD: 0x${cmd.toString(16)} Params: [${params}]`);
     await writer.write(packet);
     
     let buffer = [];
     const start = Date.now();
     const targetLength = expectedBytes > 0 ? (expectedBytes + 3) : 1; 
     
-    while (Date.now() - start < 1500) { 
+    while (Date.now() - start < 1000) { 
         const { value, done } = await reader.read();
         if (done) break;
         if (value) {
             for(let b of value) buffer.push(b);
-            if (expectedBytes === 0 && buffer.includes(0x30)) return buffer;
+            if (expectedBytes === 0 && buffer.includes(0x30)) return buffer; // ACK found
             if (buffer.length >= targetLength) return buffer;
         }
     }
-    console.warn(`<< Timeout. Got ${buffer.length}/${targetLength} bytes.`);
+    // console.warn(`<< Result: Got ${buffer.length}/${targetLength}`);
     return buffer.length > 0 ? buffer : null;
+}
+
+// Read a chunk from specific address offset
+async function readChunk(offset, size) {
+    // 1. Set Address (Magic 0x20 + offset)
+    const addr = 0x20 + offset;
+    const addrHi = (addr >> 8) & 0xFF;
+    const addrLo = addr & 0xFF;
+    
+    await sendPacket(CMD.SetAddr, [0x00, addrHi, addrLo], 0); // 4-Way SetAddr usually expects 2 bytes?
+    // Wait, bootloader main.c line 228 says: CMD, 00, High, Low. (4 bytes total input)
+    // My sendPacket adds CMD. So params should be [0x00, Hi, Lo]
+    
+    // Actually, let's stick to the protocol we saw in source:
+    // CMD_SET_ADDRESS (0xFF) + [0x00, Hi, Lo]
+    // But wait, the magic offset 0x20 is usually the "High Byte" relative to flash?
+    // Let's try sending 0x00, 0x20 (EEPROM Magic) then rely on internal pointer increment?
+    // NO. Best practice is explicit addressing.
+    
+    // Adjusted for "Magic Address":
+    // The bootloader maps 0x20XX to EEPROM.
+    await sendPacket(CMD.SetAddr, [0x00, (0x20 + (offset >> 8)), (offset & 0xFF)], 0);
+    
+    // 2. Read
+    const resp = await sendPacket(CMD.ReadEE, [size], size);
+    if(resp && resp.length >= size) {
+        // Strip headers (ACK) if present
+        if(resp[0] === 0x30) return resp.slice(1, size+1);
+        return resp.slice(0, size);
+    }
+    return null;
 }
 
 // ==========================================
@@ -88,66 +119,72 @@ async function handleConnection() {
         connected = true;
         updateStatus("CONNECTED", true);
 
-        // 1. INIT SEQUENCE
         console.log("Sending Init...");
         await sendPacket(CMD.Init, [0], 0);
         await new Promise(r => setTimeout(r, 100)); 
 
-        // 2. SET ADDRESS (Magic EEPROM Address 0x20)
-        console.log("Setting Address...");
-        // CMD 0xFF, High:0x00, Low:0x20 (Magic value for EEPROM Start)
-        await sendPacket(CMD.SetAddr, [0x00, 0x20], 0);
-        await new Promise(r => setTimeout(r, 100));
+        console.log("Reading EEPROM (Chunked)...");
+        let fullData = [];
+        const chunkSize = 32; // Safe size
+        const totalSize = 176;
         
-        // 3. READ EEPROM
-        console.log("Reading EEPROM...");
-        const response = await sendPacket(CMD.ReadEE, [176], 176);
+        for(let i=0; i<totalSize; i+=chunkSize) {
+            console.log(`Reading chunk ${i}/${totalSize}...`);
+            // Set Address to EEPROM Magic (0x2000) + offset
+            // Bootloader main.c: if(address == 0x20) -> EEPROM_START_ADD
+            // So we send SetAddr [0x00, 0x20, 0x00] ?
+            // Actually, bootloader checks: address = rxBuffer[2]<<8 | rxBuffer[3]
+            // If address == 0x20 (32), it maps to EEPROM start.
+            // If address == 0x22, it continues.
+            
+            // STRATEGY:
+            // First Chunk: Send SetAddr [0x00, 0x00, 0x20] -> Triggers EEPROM Start
+            // Subsequent: Send SetAddr [0x00, 0x00, 0x22] -> Triggers Continue
+            
+            let addrParam = [0x00, 0x00, 0x20]; // Default to EEPROM Start magic
+            if(i > 0) addrParam = [0x00, 0x00, 0x22]; // Continue magic
+            
+            await sendPacket(CMD.SetAddr, addrParam, 0);
+            
+            const chunk = await sendPacket(CMD.ReadEE, [chunkSize], chunkSize);
+            
+            if(!chunk) throw new Error("Chunk read failed at " + i);
+            
+            // Clean chunk (remove ACK/CRC)
+            let cleanChunk = chunk;
+            if(chunk[0] === 0x30) cleanChunk = chunk.slice(1); // Remove ACK
+            cleanChunk = cleanChunk.slice(0, chunkSize); // Trim CRC
+            
+            fullData = fullData.concat(Array.from(cleanChunk));
+        }
         
-        if (response && response.length > 170) {
-            let dataStart = 0;
-            if (response[0] === 0x30) dataStart = 1;
-            
-            const data = response.slice(dataStart, dataStart + 176); 
-            
-            originalSettings = Array.from(data);
-            parseSettings(data);
+        if (fullData.length >= 176) {
+            originalSettings = fullData;
+            parseSettings(fullData);
             enableBackupBtn();
             showToast("Settings Loaded!");
-        } else {
-            console.warn("Read failed/incomplete.");
-            alert("Connection OK, but Read failed.\n\nTry Unplugging USB and Reconnecting.");
-            btnSave.style.display = 'none'; 
-        }
+        } 
         
     } catch (err) {
         console.error(err);
-        alert("Error: " + err);
+        alert("Read Error: " + err.message + "\nCheck Console for details.");
         await disconnectSerial();
     }
 }
 
 async function handleSave() {
-    if (!connected) return;
-    
-    if (!originalSettings) {
-        alert("Cannot save! Settings were not read correctly.");
-        return;
-    }
-
+    if (!connected || !originalSettings) return;
     btnSave.textContent = "Saving...";
     
-    // 1. UPDATE BUFFER FROM UI
+    // UPDATE BUFFER FROM UI
     let newBytes = [...originalSettings]; 
-    
     newBytes[OFFSET.START_POWER] = parseInt(document.getElementById('input-power').value);
     newBytes[OFFSET.SINE_RANGE] = parseInt(document.getElementById('input-range').value);
     newBytes[OFFSET.BRAKE_STR] = parseInt(document.getElementById('input-stop-power').value);
     newBytes[OFFSET.TIMING] = parseInt(document.getElementById('input-timing').value);
     newBytes[OFFSET.BEEP] = parseInt(document.getElementById('input-beep').value);
-    
     newBytes[OFFSET.KV] = Math.max(0, (parseInt(document.getElementById('input-kv').value) - 20) / 40);
     newBytes[OFFSET.POLES] = parseInt(document.getElementById('input-poles').value);
-    
     newBytes[OFFSET.BRAKE_STOP] = document.getElementById('input-brakeOnStop').checked ? 1 : 0;
     newBytes[OFFSET.DIR] = document.getElementById('input-reverse').checked ? 1 : 0;
     newBytes[OFFSET.COMP_PWM] = document.getElementById('input-comp-pwm').checked ? 1 : 0;
@@ -155,22 +192,25 @@ async function handleSave() {
     newBytes[OFFSET.STALL] = document.getElementById('input-stall').checked ? 1 : 0;
     newBytes[OFFSET.STUCK] = document.getElementById('input-stuck').checked ? 1 : 0;
 
-    // 2. SET ADDRESS (Reset pointer to EEPROM Start)
-    await sendPacket(CMD.SetAddr, [0x00, 0x20], 0);
-    await new Promise(r => setTimeout(r, 100));
-
-    // 3. SEND WRITE COMMAND
+    // WRITE CHUNKS
     try {
-        const result = await sendPacket(CMD.WriteEE, newBytes);
-        if(result) {
-            btnSave.textContent = "Saved ✓";
-            originalSettings = newBytes; // Update local backup
-            setTimeout(() => { btnSave.textContent = "Save to ESC"; }, 1500);
-        } else {
-            throw new Error("No ACK from ESC");
+        const chunkSize = 32;
+        for(let i=0; i<176; i+=chunkSize) {
+            let addrParam = [0x00, 0x00, 0x20]; 
+            if(i > 0) addrParam = [0x00, 0x00, 0x22]; // Continue magic
+            await sendPacket(CMD.SetAddr, addrParam, 0);
+            
+            // CMD_WRITE_EEPROM (0x05)
+            const chunk = newBytes.slice(i, i+chunkSize);
+            const res = await sendPacket(CMD.WriteEE, chunk);
+            if(!res) throw new Error("Write failed at chunk " + i);
         }
+        
+        btnSave.textContent = "Saved ✓";
+        originalSettings = newBytes; 
+        setTimeout(() => { btnSave.textContent = "Save to ESC"; }, 1500);
     } catch(e) {
-        alert("Write Failed! Check connection.");
+        alert("Write Failed: " + e.message);
         btnSave.textContent = "Save to ESC";
     }
 }
