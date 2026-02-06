@@ -1,7 +1,7 @@
 /*
-  CRAWLER COMMAND - EXPLICIT ADDRESSING
+  CRAWLER COMMAND - STABILITY EDITION
   Status: PRODUCTION
-  Update: Removed 'Continue Magic'. Uses Explicit Addressing for every chunk.
+  Update: 16-byte chunks, 50ms delays, Race-condition fixes.
 */
 
 // ==========================================
@@ -46,27 +46,35 @@ function crc16(data) {
 }
 
 // ==========================================
-// 2. SERIAL PROTOCOL
+// 2. SERIAL PROTOCOL (STABLE)
 // ==========================================
 async function sendPacket(cmd, params = [], expectedBytes = 0) {
-    if (!writer) throw new Error("Stream Closed");
+    if (!writer) return null;
     
     const payload = [cmd, ...params];
     const crc = crc16(new Uint8Array(payload));
     const packet = new Uint8Array([...payload, (crc & 0xFF), (crc >> 8) & 0xFF]);
     
-    // console.log(`>> CMD: 0x${cmd.toString(16)} Params: [${params}]`);
     await writer.write(packet);
     
     let buffer = [];
     const start = Date.now();
     const targetLength = expectedBytes > 0 ? (expectedBytes + 3) : 1; 
     
-    while (Date.now() - start < 1000) { 
-        const { value, done } = await reader.read();
-        if (done) break;
-        if (value) {
-            for(let b of value) buffer.push(b);
+    // Read with explicit Timeout Race
+    while (Date.now() - start < 800) { 
+        // Create a read promise
+        const readPromise = reader.read();
+        // Create a timeout promise
+        const timeoutPromise = new Promise(resolve => setTimeout(() => resolve({ timeout: true }), 200));
+        
+        const result = await Promise.race([readPromise, timeoutPromise]);
+        
+        if (result.timeout) continue; // Just loop check time
+        if (result.done) break;
+        
+        if (result.value) {
+            for(let b of result.value) buffer.push(b);
             if (expectedBytes === 0 && buffer.includes(0x30)) return buffer; 
             if (buffer.length >= targetLength) return buffer;
         }
@@ -89,51 +97,54 @@ async function handleConnection() {
         connected = true;
         updateStatus("CONNECTED", true);
 
+        // 1. INIT
         console.log("Sending Init...");
         await sendPacket(CMD.Init, [0], 0);
         await new Promise(r => setTimeout(r, 100)); 
 
-        console.log("Reading EEPROM (Explicit Chunking)...");
+        console.log("Reading EEPROM (16-byte Chunks)...");
         let fullData = [];
-        const chunkSize = 32; 
+        const chunkSize = 16; // Smaller chunks = More stability
         const totalSize = 176;
         
         for(let i=0; i<totalSize; i+=chunkSize) {
-            // EXPLICIT ADDRESS CALCULATION
-            // Magic Base = 0x2000
+            // Check connection before every chunk
+            if(!connected) break;
+            
+            // Set Address
             const currentAddr = 0x2000 + i;
             const addrHi = (currentAddr >> 8) & 0xFF; 
             const addrLo = currentAddr & 0xFF;        
             
-            // console.log(`Reading offset ${i} at Addr 0x${currentAddr.toString(16)}`);
-            
-            // Send SetAddr (0xFF, 0x00, Hi, Lo)
             await sendPacket(CMD.SetAddr, [0x00, addrHi, addrLo], 0);
+            await new Promise(r => setTimeout(r, 20)); // Breathe
             
-            // Send Read (0x04, Size)
+            // Read
             const chunk = await sendPacket(CMD.ReadEE, [chunkSize], chunkSize);
             
             if(!chunk) {
-                console.warn(`Chunk ${i} failed.`);
-                break; // Stop trying to read if one fails
+                console.warn(`Chunk ${i} failed/timed out.`);
+                break; 
             }
             
-            // Clean chunk (remove ACK/CRC)
+            // Clean chunk
             let cleanChunk = chunk;
             if(chunk[0] === 0x30) cleanChunk = chunk.slice(1); 
             cleanChunk = cleanChunk.slice(0, chunkSize); 
             
             fullData = fullData.concat(Array.from(cleanChunk));
+            console.log(`Read ${fullData.length}/${totalSize}`);
+            
+            await new Promise(r => setTimeout(r, 30)); // Delay between chunks
         }
         
-        if (fullData.length >= 100) { // If we got most of it
+        if (fullData.length >= 100) { 
             originalSettings = fullData;
             parseSettings(fullData);
             enableBackupBtn();
             showToast("Settings Loaded!");
         } else {
-            console.warn("Incomplete Read.");
-            alert("Connection OK, but Read Stopped.\nUnplug/Replug USB.");
+            alert("Read Incomplete. Check connection.");
             btnSave.style.display = 'none';
         }
         
@@ -164,17 +175,21 @@ async function handleSave() {
     newBytes[OFFSET.STUCK] = document.getElementById('input-stuck').checked ? 1 : 0;
 
     try {
-        const chunkSize = 32;
+        const chunkSize = 16; // Write small chunks too
         for(let i=0; i<176; i+=chunkSize) {
-            // Explicit Address Write
+            if(!connected) break;
+            
             const currentAddr = 0x2000 + i;
             const addrHi = (currentAddr >> 8) & 0xFF; 
             const addrLo = currentAddr & 0xFF;   
             await sendPacket(CMD.SetAddr, [0x00, addrHi, addrLo], 0);
+            await new Promise(r => setTimeout(r, 20));
             
             const chunk = newBytes.slice(i, i+chunkSize);
             const res = await sendPacket(CMD.WriteEE, chunk);
             if(!res) throw new Error("Write failed at " + i);
+            
+            await new Promise(r => setTimeout(r, 30));
         }
         
         btnSave.textContent = "Saved ✓";
@@ -188,9 +203,9 @@ async function handleSave() {
 
 async function disconnectSerial() {
     try {
-        if (writer) await writer.close();
-        if (reader) await reader.cancel();
-        if (port) await port.close();
+        if (reader) { await reader.cancel(); reader.releaseLock(); }
+        if (writer) { await writer.close(); writer.releaseLock(); }
+        if (port) { await port.close(); }
     } catch(e) { console.log(e); }
     connected = false;
     updateStatus("DISCONNECTED", false);
